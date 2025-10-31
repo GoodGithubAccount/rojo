@@ -12,6 +12,7 @@ use rayon::prelude::*;
 use rbx_dom_weak::{types::Ref, Ustr};
 use serde::Serialize;
 use tokio::runtime::Runtime;
+use pathdiff::diff_paths;
 
 use crate::{
     serve_session::ServeSession,
@@ -169,31 +170,28 @@ fn recurse_create_node<'a>(
     referent: Ref,
     project_dir: &Path,
     filter: fn(&InstanceWithMeta) -> bool,
-    use_absolute_paths: bool,
 ) -> Option<SourcemapNode<'a>> {
     let instance = tree.get_instance(referent).expect("instance did not exist");
-
     let children: Vec<_> = instance
         .children()
         .par_iter()
-        .filter_map(|&child_id| {
-            recurse_create_node(tree, child_id, project_dir, filter, use_absolute_paths)
-        })
+        .filter_map(|&child_id| recurse_create_node(tree, child_id, project_dir, filter))
         .collect();
-
     // If this object has no children and doesn't pass the filter, it doesn't
     // contain any information we're looking for.
     if children.is_empty() && !filter(&instance) {
         return None;
     }
 
-    let file_paths = instance
-        .metadata()
-        .relevant_paths
-        .iter()
-        // Not all paths listed as relevant are guaranteed to exist.
-        .filter(|path| path.is_file())
-        .map(|path| path.as_path());
+	let file_paths = instance
+		.metadata()
+		.relevant_paths
+		.iter()
+		.filter(|path| path.is_file())
+		.filter_map(|path| {
+			diff_paths(path, project_dir) // project_dir should be absolute
+		})
+		.collect::<Vec<_>>();
 
     let mut output_file_paths: Vec<Cow<'a, Path>> =
         Vec::with_capacity(instance.metadata().relevant_paths.len());
